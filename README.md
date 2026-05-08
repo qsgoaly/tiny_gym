@@ -32,7 +32,10 @@ Simulates a phone call between a bank customer and an LLM-powered customer servi
 ```bash
 pip install -r requirements.txt
 ```
-
+or use sglang docker
+```
+docker pull lmsysorg/sglang:latest
+```
 ### 2. Run (auto-starts server)
 
 ```bash
