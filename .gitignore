@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenvs
+.venv/
+venv/
+
+# Local profile output (when --profile-out or shell-redirected --console used)
+profiles/
+*.jsonl
+
+# Claude Code per-user settings
+.claude/settings.local.json
+
+# OS junk
+.DS_Store
+Thumbs.db
+__pycache__/workflow.cpython-312.pyc
+__pycache__/workflow.cpython-312.pyc

@@ -5,6 +5,7 @@ import time
 import openai
 
 from database import verify_identity, get_account_balance
+from profiler import inject_traceparent_headers, span
 from tools import SYSTEM_PROMPT, TOOLS
 
 SGLANG_BASE_URL = "http://localhost:30000/v1"
@@ -62,13 +63,30 @@ SCENARIOS = {
 
 
 def _call_llm(client, messages):
-    return client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=messages,
-        tools=TOOLS,
-        tool_choice="auto",
-        temperature=0.1,
-    )
+    with span(
+        "llm_request", "llm_request",
+        model=MODEL_NAME, **{"sglang.url": SGLANG_BASE_URL},
+    ) as s:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+            tools=TOOLS,
+            tool_choice="auto",
+            temperature=0.1,
+            extra_headers=inject_traceparent_headers(),
+        )
+        choice = response.choices[0]
+        usage = getattr(response, "usage", None)
+        prompt_tokens = completion_tokens = 0
+        if usage is not None:
+            prompt_tokens = usage.prompt_tokens
+            completion_tokens = usage.completion_tokens
+            s.set_attribute("prompt_tokens", prompt_tokens)
+            s.set_attribute("completion_tokens", completion_tokens)
+            s.set_attribute("total_tokens", usage.total_tokens)
+        s.set_attribute("finish_reason", choice.finish_reason)
+        s.set_attribute("n_tool_calls", len(choice.message.tool_calls or []))
+        return response, prompt_tokens, completion_tokens
 
 
 def _handle_tool_calls(tool_calls):
@@ -78,9 +96,17 @@ def _handle_tool_calls(tool_calls):
         fn_args = json.loads(tc.function.arguments)
         print(f"\n  [Tool Call]  {fn_name}({json.dumps(fn_args)})")
 
-        t0 = time.time()
-        result = TOOL_DISPATCH[fn_name](**fn_args)
-        elapsed = time.time() - t0
+        with span(f"tool_call:{fn_name}", "tool_call", **{"tool.name": fn_name}) as s:
+            t0 = time.time()
+            try:
+                result = TOOL_DISPATCH[fn_name](**fn_args)
+                s.set_attribute("tool.success", True)
+            except Exception as e:
+                s.set_attribute("tool.success", False)
+                s.set_attribute("tool.error", repr(e))
+                raise
+            elapsed = time.time() - t0
+            s.set_attribute("tool.result_size", len(result))
         print(f"  [Tool Result] ({elapsed:.1f}s) {result}")
 
         results.append({
@@ -101,25 +127,56 @@ def run_conversation(scenario_name="cooperative"):
     client = openai.OpenAI(base_url=SGLANG_BASE_URL, api_key="not-needed")
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    for user_msg in scenario["script"]:
-        print(f"\n{'='*60}")
-        print(f"[Customer]: {user_msg}")
-        messages.append({"role": "user", "content": user_msg})
+    with span(
+        f"scenario:{scenario_name}", "scenario",
+        scenario_name=scenario_name, model=MODEL_NAME,
+    ) as scenario_span:
+        scenario_totals = {"llm": 0, "tool": 0, "prompt_tok": 0, "completion_tok": 0}
 
-        while True:
-            response = _call_llm(client, messages)
-            assistant_msg = response.choices[0].message
+        for turn_index, user_msg in enumerate(scenario["script"]):
+            print(f"\n{'='*60}")
+            print(f"[Customer]: {user_msg}")
+            messages.append({"role": "user", "content": user_msg})
 
-            messages.append(assistant_msg)
+            with span(
+                f"turn[{turn_index}]", "turn",
+                turn_index=turn_index,
+                user_message=user_msg[:80],
+            ) as turn_span:
+                turn_llm = turn_tool = turn_pt = turn_ct = 0
+                while True:
+                    response, pt, ct = _call_llm(client, messages)
+                    turn_llm += 1
+                    turn_pt += pt
+                    turn_ct += ct
+                    assistant_msg = response.choices[0].message
+                    messages.append(assistant_msg)
 
-            if assistant_msg.tool_calls:
-                tool_results = _handle_tool_calls(assistant_msg.tool_calls)
-                messages.extend(tool_results)
-                continue
+                    if assistant_msg.tool_calls:
+                        turn_tool += len(assistant_msg.tool_calls)
+                        tool_results = _handle_tool_calls(assistant_msg.tool_calls)
+                        messages.extend(tool_results)
+                        continue
 
-            if assistant_msg.content:
-                print(f"\n[Agent]: {assistant_msg.content}")
-            break
+                    if assistant_msg.content:
+                        print(f"\n[Agent]: {assistant_msg.content}")
+                    break
+
+                turn_span.set_attribute("n_llm_calls", turn_llm)
+                turn_span.set_attribute("n_tool_calls", turn_tool)
+                turn_span.set_attribute("prompt_tokens", turn_pt)
+                turn_span.set_attribute("completion_tokens", turn_ct)
+                scenario_totals["llm"] += turn_llm
+                scenario_totals["tool"] += turn_tool
+                scenario_totals["prompt_tok"] += turn_pt
+                scenario_totals["completion_tok"] += turn_ct
+
+        scenario_span.set_attribute("n_turns", len(scenario["script"]))
+        scenario_span.set_attribute("n_llm_calls", scenario_totals["llm"])
+        scenario_span.set_attribute("n_tool_calls", scenario_totals["tool"])
+        scenario_span.set_attribute("prompt_tokens", scenario_totals["prompt_tok"])
+        scenario_span.set_attribute("completion_tokens", scenario_totals["completion_tok"])
+        scenario_span.set_attribute("n_messages", len(messages))
 
     print(f"\n{'='*60}")
     print(f"[Conversation complete — {len(messages)} messages total]\n")

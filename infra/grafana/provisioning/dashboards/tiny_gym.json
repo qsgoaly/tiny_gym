@@ -1,0 +1,182 @@
+{
+  "uid": "tiny-gym-overview",
+  "title": "tiny_gym overview",
+  "tags": ["tiny_gym"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "graphTooltip": 2,
+  "annotations": {
+    "list": [
+      {
+        "name": "Trace window",
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+        "enable": true,
+        "iconColor": "red",
+        "target": {
+          "editorType": "sql",
+          "rawSql": "SELECT min(Timestamp) AS time, max(addNanoseconds(Timestamp, Duration)) AS timeEnd, concat('trace ', '${trace_id}') AS text FROM otel.otel_traces WHERE TraceId = '${trace_id}'"
+        }
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "trace_id",
+        "label": "Trace",
+        "type": "query",
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+        "refresh": 1,
+        "sort": 0,
+        "regex": "",
+        "query": {
+          "editorType": "sql",
+          "rawSql": "SELECT TraceId AS __value, concat(toString(Timestamp), '  ', SpanAttributes['scenario_name'], '  ', toString(round(Duration/1e9, 1)), 's') AS __text FROM otel.otel_traces WHERE SpanAttributes['tiny_gym.kind'] = 'scenario' ORDER BY Timestamp DESC LIMIT 30"
+        }
+      },
+      {
+        "name": "metric",
+        "label": "Metric",
+        "type": "custom",
+        "current": { "text": "GPU VRAM used (MB)", "value": "DCGM_FI_DEV_FB_USED" },
+        "options": [
+          { "text": "GPU VRAM used (MB)", "value": "DCGM_FI_DEV_FB_USED", "selected": true },
+          { "text": "GPU SM utilization (%)", "value": "DCGM_FI_DEV_GPU_UTIL" },
+          { "text": "GPU Power (W)", "value": "DCGM_FI_DEV_POWER_USAGE" },
+          { "text": "GPU Temperature (°C)", "value": "DCGM_FI_DEV_GPU_TEMP" },
+          { "text": "sglang KV cache used (tokens)", "value": "sglang_kv_used_tokens" },
+          { "text": "sglang KV cache available (tokens)", "value": "sglang_kv_available_tokens" },
+          { "text": "sglang Running requests", "value": "sglang_num_running_reqs" },
+          { "text": "sglang Queued requests", "value": "sglang_num_queue_reqs" },
+          { "text": "sglang Generation throughput (tok/s)", "value": "sglang_gen_throughput" },
+          { "text": "sglang Cache hit rate", "value": "sglang_cache_hit_rate" },
+          { "text": "sglang Utilization", "value": "sglang_utilization" },
+          { "text": "Host CPU utilization (by state)", "value": "system.cpu.utilization" },
+          { "text": "Host RAM utilization", "value": "system.memory.utilization" },
+          { "text": "Host Load 1m", "value": "system.cpu.load_average.1m" },
+          { "text": "Host Load 5m", "value": "system.cpu.load_average.5m" },
+          { "text": "Per-PID GPU VRAM (bytes)", "value": "gpu_process_memory_bytes" },
+          { "text": "Per-PID CPU utilization", "value": "process.cpu.utilization" },
+          { "text": "Per-PID RAM utilization", "value": "process.memory.utilization" }
+        ],
+        "query": "GPU VRAM used (MB) : DCGM_FI_DEV_FB_USED, GPU SM utilization (%) : DCGM_FI_DEV_GPU_UTIL, GPU Power (W) : DCGM_FI_DEV_POWER_USAGE, GPU Temperature (°C) : DCGM_FI_DEV_GPU_TEMP, sglang KV cache used (tokens) : sglang_kv_used_tokens, sglang KV cache available (tokens) : sglang_kv_available_tokens, sglang Running requests : sglang_num_running_reqs, sglang Queued requests : sglang_num_queue_reqs, sglang Generation throughput (tok/s) : sglang_gen_throughput, sglang Cache hit rate : sglang_cache_hit_rate, sglang Utilization : sglang_utilization, Host CPU utilization (by state) : system.cpu.utilization, Host RAM utilization : system.memory.utilization, Host Load 1m : system.cpu.load_average.1m, Host Load 5m : system.cpu.load_average.5m, Per-PID GPU VRAM (bytes) : gpu_process_memory_bytes, Per-PID CPU utilization : process.cpu.utilization, Per-PID RAM utilization : process.memory.utilization"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Recent scenario runs (click TraceId → zoom dashboard + select that trace)",
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "TraceId" },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Zoom dashboard to this exact trace window",
+                    "url": "/d/tiny-gym-overview/tiny-gym-overview?var-trace_id=${__value.raw}&from=${__data.fields[\"zoom_from_ms\"].numeric}&to=${__data.fields[\"zoom_to_ms\"].numeric}"
+                  },
+                  {
+                    "title": "Open in Tempo",
+                    "internal": {
+                      "datasourceUid": "tempo",
+                      "datasourceName": "Tempo",
+                      "query": {
+                        "query": "${__value.raw}",
+                        "queryType": "traceql"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "zoom_(from|to)_ms" },
+            "properties": [
+              { "id": "custom.hidden", "value": true }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "pluginVersion": "4",
+          "editorType": "sql",
+          "queryType": "table",
+          "rawSql": "SELECT Timestamp AS time, SpanAttributes['scenario_name'] AS scenario, round(Duration/1e9, 2) AS duration_s, toInt64OrNull(SpanAttributes['n_llm_calls']) AS n_llm, toInt64OrNull(SpanAttributes['n_tool_calls']) AS n_tool, toInt64OrNull(SpanAttributes['prompt_tokens']) AS prompt_tok, toInt64OrNull(SpanAttributes['completion_tokens']) AS completion_tok, toInt64OrNull(SpanAttributes['gpu.mem_delta_mb']) AS vram_delta_mb, toInt64OrNull(SpanAttributes['mem.rss_delta_mb']) AS rss_delta_mb, TraceId, toInt64(toUnixTimestamp64Milli(Timestamp)) AS zoom_from_ms, toInt64(toUnixTimestamp64Milli(addNanoseconds(Timestamp, Duration))) AS zoom_to_ms FROM otel.otel_traces WHERE SpanAttributes['tiny_gym.kind'] = 'scenario' ORDER BY Timestamp DESC LIMIT 50",
+          "format": 1,
+          "meta": { "builderOptions": { "queryType": "table" } }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "row",
+      "title": "Trace inspector",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "id": 3,
+      "type": "traces",
+      "title": "Trace ${trace_id} (Tempo)",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "x": 0, "y": 9, "w": 12, "h": 18 },
+      "options": {
+        "spanBar": {
+          "type": "Tag",
+          "tag": "tiny_gym.kind"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "traceql",
+          "query": "${trace_id}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "$metric  (red band = trace window)",
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "gridPos": { "x": 12, "y": 9, "w": 12, "h": 18 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "lineWidth": 4,
+            "pointSize": 8,
+            "showPoints": "always",
+            "spanNulls": true,
+            "lineInterpolation": "linear"
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "pluginVersion": "4",
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "rawSql": "SELECT TimeUnix AS time, multiIf(Attributes['pid'] != '', concat('pid', Attributes['pid'], ' ', substring(Attributes['process_name'], 1, 30)), ResourceAttributes['process.pid'] != '' AND Attributes['state'] != '', concat('pid', ResourceAttributes['process.pid'], ' ', Attributes['state']), ResourceAttributes['process.pid'] != '', concat('pid', ResourceAttributes['process.pid'], ' ', ResourceAttributes['process.executable.name']), Attributes['state'] != '', Attributes['state'], Attributes['gpu'] != '', concat('gpu', Attributes['gpu']), MetricName) AS series, Value FROM otel.otel_metrics_gauge WHERE MetricName = '${metric}' AND TimeUnix BETWEEN (SELECT min(Timestamp) FROM otel.otel_traces WHERE TraceId = '${trace_id}') AND (SELECT max(addNanoseconds(Timestamp, Duration)) FROM otel.otel_traces WHERE TraceId = '${trace_id}') ORDER BY time",
+          "format": 0
+        }
+      ]
+    }
+  ]
+}
