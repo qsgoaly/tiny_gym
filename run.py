@@ -1,9 +1,12 @@
 import argparse
+import os
 import subprocess
 import sys
 import time
 
 import requests
+
+from profiler import DEFAULT_OTLP_ENDPOINT, setup_tracer
 
 SGLANG_URL = "http://localhost:30000"
 MODEL_PATH = "Qwen/Qwen3.5-9B"
@@ -24,7 +27,8 @@ def wait_for_server(timeout=300):
     raise TimeoutError("sglang server did not become ready in time")
 
 
-def start_server():
+def start_server(trace_endpoint: str):
+    host_port = trace_endpoint.replace("http://", "").replace("https://", "").rstrip("/")
     cmd = [
         sys.executable, "-m", "sglang.launch_server",
         "--model-path", MODEL_PATH,
@@ -33,6 +37,9 @@ def start_server():
         "--host", "0.0.0.0",
         "--port", "30000",
         "--trust-remote-code",
+        "--enable-metrics",
+        "--enable-trace",
+        "--otlp-traces-endpoint", host_port,
     ]
     print(f"Launching sglang server: {' '.join(cmd)}")
     proc = subprocess.Popen(cmd, stdout=sys.stdout, stderr=sys.stderr)
@@ -41,20 +48,24 @@ def start_server():
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Bank customer service call simulation"
-    )
+    parser = argparse.ArgumentParser(description="Bank customer service call simulation")
     parser.add_argument(
-        "scenario",
-        nargs="?",
-        default="cooperative",
+        "scenario", nargs="?", default="cooperative",
         choices=["cooperative", "reluctant", "piecemeal", "wrong_info"],
         help="Which scenario to run (default: cooperative)",
     )
+    parser.add_argument("--all", action="store_true", help="Run all scenarios")
     parser.add_argument(
-        "--all", action="store_true", help="Run all scenarios"
+        "--otlp", default=None,
+        help="Override OTLP gRPC endpoint "
+             "(default: $OTEL_EXPORTER_OTLP_ENDPOINT or http://localhost:4317)",
     )
     args = parser.parse_args()
+
+    provider = setup_tracer(otlp_endpoint=args.otlp)
+    trace_endpoint = (
+        args.otlp or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or DEFAULT_OTLP_ENDPOINT
+    )
 
     server_proc = None
     try:
@@ -62,7 +73,7 @@ def main():
             requests.get(f"{SGLANG_URL}/health_generate", timeout=2)
             print("sglang server already running.")
         except requests.RequestException:
-            server_proc = start_server()
+            server_proc = start_server(trace_endpoint=trace_endpoint)
 
         from workflow import run_conversation
         if args.all:
@@ -72,6 +83,7 @@ def main():
         else:
             run_conversation(args.scenario)
     finally:
+        provider.shutdown()
         if server_proc is not None:
             print("\nShutting down sglang server ...")
             server_proc.terminate()

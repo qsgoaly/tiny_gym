@@ -1,3 +1,6 @@
 sglang
 openai
 numpy
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp

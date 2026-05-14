@@ -1,0 +1,64 @@
+apiVersion: 1
+
+datasources:
+  - name: Tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    uid: tempo
+    jsonData:
+      httpMethod: GET
+      tracesToLogsV2:
+        datasourceUid: clickhouse
+      tracesToMetrics:
+        datasourceUid: clickhouse
+      serviceMap:
+        datasourceUid: clickhouse
+      nodeGraph:
+        enabled: true
+
+  - name: ClickHouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    uid: clickhouse
+    jsonData:
+      host: clickhouse
+      port: 9000
+      protocol: native
+      defaultDatabase: otel
+      username: default
+      # Tell the plugin where OTel collector's auto-created trace table lives,
+      # and how its columns map. Without this, "find trace by ID" queries
+      # generate FROM otel (wrong) instead of FROM otel.otel_traces.
+      traces:
+        defaultDatabase: otel
+        defaultTable: otel_traces
+        otelEnabled: true
+        otelVersion: latest
+        traceIdColumn: TraceId
+        spanIdColumn: SpanId
+        operationNameColumn: SpanName
+        parentSpanIdColumn: ParentSpanId
+        serviceNameColumn: ServiceName
+        durationColumn: Duration
+        durationUnit: nanoseconds
+        startTimeColumn: Timestamp
+        tagsColumn: SpanAttributes
+        serviceTagsColumn: ResourceAttributes
+        kindColumn: SpanKind
+        statusCodeColumn: StatusCode
+        statusMessageColumn: StatusMessage
+      # We don't ship logs; point the plugin's logs config at otel_traces so
+      # the "Trace Logs" tab doesn't error out with FROM otel. It'll show
+      # span rows instead of log lines — not ideal but better than a crash.
+      logs:
+        defaultDatabase: otel
+        defaultTable: otel_traces
+        otelEnabled: true
+        otelVersion: latest
+        timeColumn: Timestamp
+        levelColumn: StatusCode
+        messageColumn: SpanName
+        traceIdColumn: TraceId
+    secureJsonData:
+      password: ""

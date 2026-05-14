@@ -1,0 +1,96 @@
+receivers:
+  # Traces from workflow.py + sglang server (cross-process)
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # GPU metrics from DCGM exporter (continuous time-series, ~5s resolution)
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: dcgm
+          scrape_interval: 100ms   # 10Hz; DCGM exporter internal poll also at 100ms
+          static_configs:
+            - targets: ['dcgm-exporter:9400']
+        - job_name: sglang
+          scrape_interval: 1s
+          metrics_path: /metrics
+          static_configs:
+            - targets: ['host.docker.internal:30000']
+        - job_name: nvml-pid
+          scrape_interval: 1s
+          static_configs:
+            - targets: ['nvml-pid-exporter:9401']
+
+  # Host CPU / RAM / load / network — read host's /proc and /sys via mounts
+  hostmetrics:
+    collection_interval: 1s   # 1Hz; /proc reads are cheap (<1ms per scraper)
+    root_path: /hostfs
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      load:
+      network:
+      # per-process CPU + RAM; filter to python* to avoid 200-process noise
+      process:
+        mute_process_name_error: true
+        mute_process_exe_error: true
+        mute_process_io_error: true
+        mute_process_cgroup_error: true
+        mute_process_user_error: true
+        include:
+          names: ["python.*"]
+          match_type: regexp
+        metrics:
+          process.cpu.utilization:
+            enabled: true
+          process.memory.utilization:
+            enabled: true
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+
+exporters:
+  # Fan-out #1: forward to Tempo for trace UI (Grafana reads from here)
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Fan-out #2: persist to ClickHouse for SQL analysis / long-term retention.
+  # Handles traces (otel_traces) and metrics (otel_metrics_{gauge,sum,...}).
+  clickhouse:
+    endpoint: tcp://clickhouse:9000?dial_timeout=10s
+    database: otel
+    traces_table_name: otel_traces
+    metrics_table_name: otel_metrics
+    ttl: 0           # no expiry; set "168h" or similar to auto-prune
+    create_schema: true
+    timeout: 5s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/tempo, clickhouse]
+    metrics:
+      receivers: [prometheus, hostmetrics]
+      processors: [batch]
+      exporters: [clickhouse]
